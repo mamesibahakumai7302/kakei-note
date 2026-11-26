@@ -30,6 +30,7 @@
   .tx .amt { font-size:16px; font-weight:700; white-space:nowrap; }
   .suggest { font-size:12px; color:#b3541e; background:#fdf0e4; border-radius:8px; padding:2px 8px; display:inline-block; margin-top:3px; }
   .btn { display:block; width:100%; background:#b3541e; color:#fff; border:none; border-radius:12px; padding:14px; font-size:16px; font-weight:700; margin-top:10px; }
+  .btn:disabled, button:disabled { opacity:.5; }
   .btn.sub { background:#fff; color:#b3541e; border:1px solid #b3541e; }
   .btn.ghost { background:#f4eee1; color:#5c5546; border:none; }
   .chips { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
@@ -103,8 +104,9 @@
     <div class="card">
       <div style="font-weight:700; margin-bottom:6px">レシートの写真から追加</div>
       <div class="small">写真を撮ると 金額と日付とお店を読んで 確認待ちに入るよ<br>読み取りが違ったら 確認待ちで直してね</div>
-      <input type="file" id="receiptFile" accept="image/*" capture="environment" style="display:none">
-      <button class="btn sub" id="receiptBtn">レシートを撮る・選ぶ</button>
+      <input type="file" id="receiptCam" accept="image/*" capture="environment" style="display:none">
+      <input type="file" id="receiptPick" accept="image/*" style="display:none">
+      <div class="row2"><button class="btn sub" id="receiptCamBtn">📷 レシートを撮る</button><button class="btn sub" id="receiptPickBtn">🖼 写真から選ぶ</button></div>
       <div class="ok-msg" id="receiptMsg"></div>
     </div>
   </section>
@@ -146,6 +148,12 @@ function yen(n){ return '¥' + Number(n||0).toLocaleString('ja-JP'); }
 function catById(id){ return (state.categories||[]).find(c=>c.id===id); }
 function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+async function busy(btn, fn){
+  if (!btn) return fn();
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '送信中…';
+  try { return await fn(); } finally { btn.disabled = false; btn.textContent = old; }
+}
 async function load(){
   state = await api('getState', { month });
   sortCats();
@@ -177,11 +185,12 @@ function totals(list){
   for (const t of list) m[t.categoryId] = (m[t.categoryId]||0) + t.amount;
   return m;
 }
+let CMP = '先月';
 function diffHtml(cur, prev){
   const d = (cur||0) - (prev||0);
-  if (d === 0) return '<span class="diff eq">先月と同じ</span>';
-  if (d > 0) return '<span class="diff up">先月比 +' + d.toLocaleString('ja-JP') + '円</span>';
-  return '<span class="diff dn">先月比 −' + Math.abs(d).toLocaleString('ja-JP') + '円</span>';
+  if (d === 0) return '<span class="diff eq">' + CMP + 'と同じ</span>';
+  if (d > 0) return '<span class="diff up">' + CMP + '比 +' + d.toLocaleString('ja-JP') + '円</span>';
+  return '<span class="diff dn">' + CMP + '比 −' + Math.abs(d).toLocaleString('ja-JP') + '円</span>';
 }
 
 function render(){
@@ -228,11 +237,21 @@ function renderWait(){
   el.querySelectorAll('.tx').forEach(n=> n.addEventListener('click', ()=> openEditor(Number(n.dataset.id))));
 }
 
+function ymOf(d){ return d.toLocaleDateString('sv-SE', { timeZone:'Asia/Tokyo' }).slice(0,7); }
+function cutPrev(list){
+  const now = new Date();
+  if (month !== ymOf(now)) return list || [];
+  const d = now.getDate();
+  return (list || []).filter(t => Number(String(t.date).slice(8,10)) <= d);
+}
 function renderSum(){
   const el = document.getElementById('view-sum');
-  const cur = totals(state.monthTransactions), prev = totals(state.prevMonthTransactions);
+  const prevList = cutPrev(state.prevMonthTransactions);
+  const cur = totals(state.monthTransactions), prev = totals(prevList);
   const total = state.monthTransactions.reduce((s,t)=>s+t.amount,0);
-  const prevTotal = state.prevMonthTransactions.reduce((s,t)=>s+t.amount,0);
+  const prevTotal = prevList.reduce((s,t)=>s+t.amount,0);
+  const cmpLabel = (month === ymOf(new Date())) ? '先月の同じ日まで' : '先月';
+  CMP = cmpLabel;
   let html = '';
   // 固定費の見直しサイン
   const fixed = (state.categories||[]).find(c=>c.name===FIXED_NAME);
@@ -240,10 +259,10 @@ function renderSum(){
     const byDesc = {};
     for (const t of state.monthTransactions) if (t.categoryId===fixed.id) byDesc[t.description]=(byDesc[t.description]||0)+t.amount;
     const byDescP = {};
-    for (const t of state.prevMonthTransactions) if (t.categoryId===fixed.id) byDescP[t.description]=(byDescP[t.description]||0)+t.amount;
+    for (const t of prevList) if (t.categoryId===fixed.id) byDescP[t.description]=(byDescP[t.description]||0)+t.amount;
     const inc = Object.keys(byDesc).map(d=>({ d, diff:(byDesc[d]||0)-(byDescP[d]||0) })).filter(x=>x.diff>0).sort((a,b)=>b.diff-a.diff).slice(0,3);
-    html += '<div class="banner"><div class="ttl">固定費が先月より増えてるよ</div>' +
-      '<div>今月 '+yen(cur[fixed.id])+' ／ 先月 '+yen(prev[fixed.id])+'（+'+((cur[fixed.id]||0)-(prev[fixed.id]||0)).toLocaleString('ja-JP')+'円）</div>' +
+    html += '<div class="banner"><div class="ttl">固定費が' + cmpLabel + 'より増えてるよ</div>' +
+      '<div>今月 '+yen(cur[fixed.id])+' ／ '+cmpLabel+' '+yen(prev[fixed.id])+'（+'+((cur[fixed.id]||0)-(prev[fixed.id]||0)).toLocaleString('ja-JP')+'円）</div>' +
       inc.map(x=>'<div class="it">・'+esc(x.d)+' +'+x.diff.toLocaleString('ja-JP')+'円</div>').join('') + '</div>';
   }
   // ドーナツ
@@ -307,17 +326,19 @@ function openEditor(id){
   sheet.querySelectorAll('#edCats .chip').forEach(ch=> ch.addEventListener('click', ()=>{ editCat = ch.dataset.c==='null' ? null : Number(ch.dataset.c); sheet.querySelectorAll('#edCats .chip').forEach(x=>x.classList.toggle('on', x===ch)); }));
   sheet.querySelectorAll('#edPays .chip').forEach(ch=> ch.addEventListener('click', ()=>{ editPay = ch.dataset.p; sheet.querySelectorAll('#edPays .chip').forEach(x=>x.classList.toggle('on', x===ch)); }));
   const sg = document.getElementById('edSuggest');
-  if (sg) sg.addEventListener('click', async ()=>{ try { await api('classify', { id: t.id, categoryId: s.id }); closeEditor(); await load(); } catch(e){ document.getElementById('edMsg').textContent = '登録できなかったよ'; } });
-  document.getElementById('edSave').addEventListener('click', async ()=>{
+  if (sg) sg.addEventListener('click', ()=> busy(sg, async ()=>{ try { await api('classify', { id: t.id, categoryId: s.id }); closeEditor(); await load(); } catch(e){ document.getElementById('edMsg').textContent = '登録できなかったよ'; } }));
+  const svBtn = document.getElementById('edSave');
+  svBtn.addEventListener('click', ()=> busy(svBtn, async ()=>{
     try {
       await api('updateTransaction', { id: t.id, date: document.getElementById('edDate').value, description: document.getElementById('edDesc').value, amount: Number(document.getElementById('edAmount').value||0), paymentMethod: editPay, categoryId: editCat });
       closeEditor(); await load();
     } catch(e){ document.getElementById('edMsg').textContent = '保存できなかったよ'; }
-  });
-  document.getElementById('edDelete').addEventListener('click', async ()=>{
+  }));
+  const delBtn = document.getElementById('edDelete');
+  delBtn.addEventListener('click', ()=> busy(delBtn, async ()=>{
     if (!confirm('この明細を消す？')) return;
     try { await api('deleteTransaction', { id: t.id }); closeEditor(); await load(); } catch(e){ document.getElementById('edMsg').textContent = '消せなかったよ'; }
-  });
+  }));
   document.getElementById('edClose').addEventListener('click', closeEditor);
 }
 function closeEditor(){ document.getElementById('overlay').classList.remove('show'); document.getElementById('sheet').classList.remove('show'); }
@@ -331,19 +352,22 @@ function renderAddChips(){
   document.getElementById('addPays').innerHTML = Object.keys(PAYS).map(k=>'<button class="chip'+(addPay===k?' on':'')+'" data-p="'+k+'">'+PAYS[k]+'</button>').join('');
   document.querySelectorAll('#addPays .chip').forEach(ch=> ch.addEventListener('click', ()=>{ addPay = ch.dataset.p; renderAddChips(); }));
 }
-document.getElementById('addBtn').addEventListener('click', async ()=>{
+const addBtnEl = document.getElementById('addBtn');
+addBtnEl.addEventListener('click', ()=> busy(addBtnEl, async ()=>{
   const amount = Number(document.getElementById('addAmount').value||0);
   const msg = document.getElementById('addMsg');
-  if (!amount){ msg.textContent = ''; document.getElementById('addMsg').textContent=''; alert('金額を入れてね'); return; }
+  if (!amount){ alert('金額を入れてね'); return; }
   try {
     await api('addTransaction', { date: document.getElementById('addDate').value, description: document.getElementById('addDesc').value, amount, paymentMethod: addPay, categoryId: addCat });
     document.getElementById('addAmount').value=''; document.getElementById('addDesc').value='';
+    addCat = null; renderAddChips();
     msg.textContent = '登録したよ';
     await load();
   } catch(e){ alert('登録できなかったよ'); }
-});
-document.getElementById('receiptBtn').addEventListener('click', ()=> document.getElementById('receiptFile').click());
-document.getElementById('receiptFile').addEventListener('change', async (ev)=>{
+}));
+document.getElementById('receiptCamBtn').addEventListener('click', ()=> document.getElementById('receiptCam').click());
+document.getElementById('receiptPickBtn').addEventListener('click', ()=> document.getElementById('receiptPick').click());
+async function onReceipt(ev){
   const f = ev.target.files[0]; if (!f) return;
   const msg = document.getElementById('receiptMsg'); msg.textContent = '読み取り中…';
   try {
@@ -358,7 +382,9 @@ document.getElementById('receiptFile').addEventListener('change', async (ev)=>{
     await load();
   } catch(e){ msg.textContent = '読み取れなかったよ 写真を選び直してね'; }
   ev.target.value = '';
-});
+}
+document.getElementById('receiptCam').addEventListener('change', onReceipt);
+document.getElementById('receiptPick').addEventListener('change', onReceipt);
 
 // タブ・月移動
 function setView(v){ view = v; render(); window.scrollTo(0,0); }
