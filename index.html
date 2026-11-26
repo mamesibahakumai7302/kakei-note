@@ -111,8 +111,8 @@
 </main>
 
 <nav class="tabs">
-  <button id="tabWait" class="on">確認待ち<span class="badge" id="waitBadge" style="display:none"></span></button>
-  <button id="tabSum">まとめ</button>
+  <button id="tabWait">確認待ち<span class="badge" id="waitBadge" style="display:none"></span></button>
+  <button id="tabSum" class="on">まとめ</button>
   <button id="tabAdd">追加</button>
 </nav>
 
@@ -126,7 +126,15 @@ const FIXED_NAME = '固定費';
 let pass = localStorage.getItem('kakei_pass') || '';
 let month = (()=>{ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'); })();
 let state = null;
-let view = 'wait';
+let view = 'sum';
+const CAT_ORDER = ['食料品','外食','日用品','車','固定費','ローン・住居','にこ','はるか','てっぺい','こうめ','その他'];
+function sortCats(){
+  if (!state || !state.categories) return;
+  state.categories.sort((a,b)=>{
+    const ia = CAT_ORDER.indexOf(a.name), ib = CAT_ORDER.indexOf(b.name);
+    return (ia<0?999:ia) - (ib<0?999:ib) || (a.sortOrder||0) - (b.sortOrder||0);
+  });
+}
 
 async function api(action, args){
   const res = await fetch(API_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(Object.assign({ passcode: pass, action }, args||{})) });
@@ -140,6 +148,7 @@ function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'
 
 async function load(){
   state = await api('getState', { month });
+  sortCats();
   render();
 }
 function monthText(m){ const [y,mm]=m.split('-'); return y+'年'+Number(mm)+'月'; }
@@ -361,7 +370,7 @@ document.getElementById('nextM').addEventListener('click', async ()=>{ month = s
 
 // 合言葉ゲート
 async function tryOpen(){
-  try { state = await api('getState', { month }); document.getElementById('gate').classList.remove('show'); renderAddChips(); render(); return true; }
+  try { state = await api('getState', { month }); sortCats(); document.getElementById('gate').classList.remove('show'); renderAddChips(); render(); return true; }
   catch(e){ return false; }
 }
 document.getElementById('gateBtn').addEventListener('click', async ()=>{
